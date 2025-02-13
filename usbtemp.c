@@ -1,9 +1,3 @@
-/*
-
-   USB Thermometer CLI v1 Copyright 2017 jaka
-
-*/
-
 #include <fcntl.h>
 #include <getopt.h>
 #include <stdio.h>
@@ -348,15 +342,68 @@ int DS18B20_rom(int fd)
   return 0;
 }
 
+int try_serial_port(const char *serial_port, int action, int verbose)
+{
+  int fd;
+  int rv = 0;
+
+  fd = serial_init(serial_port);
+  if (fd > 0) {
+
+    switch (action) {
+
+      case ACQUIRE_TEMP:
+
+        if (DS18B20_measure(fd) < 0) {
+          if (verbose)
+            fprintf(stderr, "%s: %s\n", serial_port, ut_errmsg());
+          close(fd);
+          return -1;
+        }
+        struct timeval wait_tv;
+        wait_tv.tv_usec = 0;
+        wait_tv.tv_sec = 1;
+        if (verbose)
+          printf("Waiting for response ...\n");
+        select(0, NULL, NULL, NULL, &wait_tv);
+        if (DS18B20_acquire(fd) < 0) {
+          if (verbose)
+            fprintf(stderr, "%s: %s\n", serial_port, ut_errmsg());
+          rv = -1;
+        }
+        break;
+
+      case READ_ROM:
+
+        if (DS18B20_rom(fd) < 0) {
+          if (verbose)
+            fprintf(stderr, "%s: %s\n", serial_port, ut_errmsg());
+          rv = -1;
+        }
+        break;
+
+    }
+
+    close(fd);
+    return rv;
+
+  }
+  else {
+    if (verbose)
+      fprintf(stderr, "%s: %s\n", serial_port, ut_errmsg());
+  }
+
+  return -1;
+}
+
 int main(int argc, char **argv)
 {
-  struct timeval wait_tv;
   char c;
-  int fd;
   char *serial_port = NULL;
   int verbose = 1;
-  int rv = 0;
   int action = ACQUIRE_TEMP;
+  const char *ports[] = {"/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyUSB2", "/dev/ttyUSB3", "/dev/ttyUSB4", "/dev/ttyUSB5", "/dev/ttyUSB6"};
+  int i;
 
   while ((c = getopt(argc, argv, "hrqs:")) != -1) {
     switch (c) {
@@ -390,51 +437,16 @@ int main(int argc, char **argv)
     return 0;
   }
 
-  if (!serial_port)
-    serial_port = "/dev/ttyUSB0";
-  if (verbose)
-    printf("Using serial port: %s\n", serial_port);
-
-  fd = serial_init(serial_port);
-  if (fd > 0) {
-
-    switch (action) {
-
-      case ACQUIRE_TEMP:
-
-        if (DS18B20_measure(fd) < 0) {
-          fprintf(stderr, "%s\n", ut_errmsg());
-          close(fd);
-          return -1;
-        }
-        wait_tv.tv_usec = 0;
-        wait_tv.tv_sec = 1;
-        if (verbose)
-          printf("Waiting for response ...\n");
-        select(0, NULL, NULL, NULL, &wait_tv);
-        if (DS18B20_acquire(fd) < 0) {
-          fprintf(stderr, "%s\n", ut_errmsg());
-          rv = -1;
-        }
-        break;
-
-      case READ_ROM:
-
-        if (DS18B20_rom(fd) < 0) {
-          fprintf(stderr, "%s\n", ut_errmsg());
-          rv = -1;
-        }
-        break;
-
+  if (serial_port) {
+    if (try_serial_port(serial_port, action, verbose) == 0)
+      return 0;
+  } else {
+    for (i = 0; i < 7; i++) {
+      if (try_serial_port(ports[i], action, verbose) == 0)
+        return 0;
     }
-
-    close(fd);
-    return rv;
-
-  }
-  else {
-    fprintf(stderr, "%s\n", ut_errmsg());
   }
 
+  fprintf(stderr, "No sensor found on any port.\n");
   return -1;
 }
